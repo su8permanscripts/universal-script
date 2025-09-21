@@ -1,0 +1,666 @@
+-- part1_core.lua
+-- Core GUI, tabs, global state, notifications
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+end)
+if not success or not Rayfield then return warn("Rayfield failed") end
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local Window = Rayfield:CreateWindow({
+    Name = "made by lil.brojames",
+    LoadingTitle = "LB HUB",
+    LoadingSubtitle = "Initializing...",
+    ConfigurationSaving = {Enabled=true, FolderName="LB_HUB", FileName="config"},
+    KeySystem=false
+})
+
+-- Tabs
+local Tabs = {
+    Fly = Window:CreateTab("Fly"),
+    Movement = Window:CreateTab("Movement"),
+    Visuals = Window:CreateTab("Visuals"),
+    Player = Window:CreateTab("Player"),
+    Utilities = Window:CreateTab("Utilities"),
+    Misc = Window:CreateTab("Misc"),
+    Credits = Window:CreateTab("Credits"),
+    Scripts = Window:CreateTab("Scripts")
+}
+
+-- Global state
+_G.LB_HUB = _G.LB_HUB or {}
+local state = _G.LB_HUB.state or {
+    flying=false, flySpeed=70, flyMode="Smooth",
+    infJump=false, noclip=false,
+    walkspeed=16, jumppower=50,
+    esp=false, espColor=Color3.fromRGB(0,255,120),
+    loopAfterDeath=false, guiKey=Enum.KeyCode.K,
+    afkPrevent=true, musicVolume=0.6,
+    rainbowChar=false, spinbot=false, nightVision=false, xray=false
+}
+_G.LB_HUB.state = state
+
+-- Helper functions
+local function notifyOk(text,dur)
+    Rayfield:Notify({Title="✅ LB HUB", Content=text, Duration=dur or 4})
+end
+local function notifyNo(text,dur)
+    Rayfield:Notify({Title="🚫 LB HUB", Content=text, Duration=dur or 4})
+end
+local function getChar() return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait() end
+
+-- GUI toggle
+UserInputService.InputBegan:Connect(function(input,g)
+    if g then return end
+    if input.KeyCode == state.guiKey then Rayfield:Toggle() end
+end)
+
+-- Credits TikTok button
+Tabs.Credits:CreateLabel("Made by lil.brojames")
+Tabs.Credits:CreateButton({
+    Name="TikTok: lil.brojames (copy)",
+    Callback=function()
+        pcall(function() setclipboard("lil.brojames") end)
+        notifyOk("Copied TikTok handle! Paste into TikTok search")
+    end
+})
+
+-- Export tabs & helpers
+_G.LB_HUB.Tabs = Tabs
+_G.LB_HUB.notifyOk = notifyOk
+_G.LB_HUB.notifyNo = notifyNo
+_G.LB_HUB.getChar = getChar
+
+print("[LB_HUB] Part1 (Core GUI) loaded")
+-- part2_movement.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local getChar = _G.LB_HUB.getChar
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Fly
+local flyingBV, flyConn
+local function startFly()
+    if state.flying then return end
+    state.flying = true
+    local char = getChar()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    flyingBV = Instance.new("BodyVelocity")
+    flyingBV.MaxForce = Vector3.new(1e9,1e9,1e9)
+    flyingBV.Parent = hrp
+    flyConn = RunService.RenderStepped:Connect(function()
+        local dir = Vector3.zero
+        local cam = workspace.CurrentCamera
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0,1,0) end
+        flyingBV.Velocity = (dir.Magnitude>0 and dir.Unit*state.flySpeed or Vector3.zero)
+    end)
+    notifyOk("Fly enabled")
+end
+
+local function stopFly()
+    state.flying=false
+    if flyConn then flyConn:Disconnect(); flyConn=nil end
+    if flyingBV then flyingBV:Destroy(); flyingBV=nil end
+    notifyNo("Fly disabled")
+end
+
+-- Fly tab
+Tabs.Fly:CreateToggle({Name="Enable Fly", CurrentValue=false, Callback=function(v) if v then startFly() else stopFly() end end})
+Tabs.Fly:CreateSlider({Name="Fly Speed", Range={20,400}, Increment=5, CurrentValue=state.flySpeed, Suffix=" speed", Callback=function(v) state.flySpeed=v end})
+Tabs.Fly:CreateDropdown({Name="Fly Mode", Options={"Smooth","Vanilla","Rocket"}, CurrentOption=state.flyMode, Callback=function(v) state.flyMode=v end})
+
+-- Infinite Jump
+Tabs.Movement:CreateToggle({Name="Infinite Jump", CurrentValue=state.infJump, Callback=function(v) state.infJump=v notifyOk(v and "Infinite Jump enabled" or "Infinite Jump disabled") end})
+game:GetService("UserInputService").JumpRequest:Connect(function()
+    if state.infJump then
+        local char = getChar()
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+-- Noclip
+local noclipConn
+Tabs.Movement:CreateToggle({Name="Noclip", CurrentValue=state.noclip, Callback=function(v)
+    state.noclip=v
+    if v then
+        noclipConn=RunService.Stepped:Connect(function()
+            local char=getChar()
+            for _,p in pairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
+        end)
+        notifyOk("Noclip enabled")
+    else
+        if noclipConn then noclipConn:Disconnect(); noclipConn=nil end
+        notifyNo("Noclip disabled")
+    end
+end})
+
+-- WalkSpeed & JumpPower sliders
+Tabs.Player:CreateSlider({Name="WalkSpeed", Range={16,400}, Increment=1, CurrentValue=state.walkspeed, Callback=function(v)
+    state.walkspeed=v
+    local hum=getChar():FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed=v end
+end})
+Tabs.Player:CreateSlider({Name="JumpPower", Range={50,400}, Increment=1, CurrentValue=state.jumppower, Callback=function(v)
+    state.jumppower=v
+    local hum=getChar():FindFirstChildOfClass("Humanoid")
+    if hum then hum.JumpPower=v end
+end})
+
+-- Loop after death
+Tabs.Movement:CreateToggle({Name="Loop after death", CurrentValue=state.loopAfterDeath, Callback=function(v) state.loopAfterDeath=v notifyOk("Loop after death "..(v and "enabled" or "disabled")) end})
+LocalPlayer.CharacterAdded:Connect(function()
+    if state.loopAfterDeath then
+        task.wait(0.5)
+        if state.flying then startFly() end
+        if state.noclip and not noclipConn then
+            noclipConn=RunService.Stepped:Connect(function()
+                local char=getChar()
+                for _,p in pairs(char:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
+            end)
+        end
+        local hum = getChar():FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed=state.walkspeed; hum.JumpPower=state.jumppower end
+        notifyOk("Utilities reapplied after respawn")
+    end
+end)
+
+print("[LB_HUB] Part2 (Movement) loaded")
+-- part3_visuals_aim.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local getChar = _G.LB_HUB.getChar
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+
+-- ESP Highlights
+local function createHighlight(character, color)
+    if not character or character:FindFirstChildOfClass("Highlight") then return end
+    local h = Instance.new("Highlight")
+    h.Parent = character
+    h.Adornee = character
+    h.FillTransparency = 0.9
+    h.OutlineColor = color or state.espColor
+    h.OutlineTransparency = 0
+    return h
+end
+
+local function clearHighlights()
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr.Character then
+            for _, c in ipairs(plr.Character:GetChildren()) do
+                if c:IsA("Highlight") then c:Destroy() end
+            end
+        end
+    end
+end
+
+Tabs.Visuals:CreateToggle({
+    Name="ESP Highlights",
+    CurrentValue=state.esp,
+    Callback=function(v)
+        state.esp=v
+        if v then
+            for _,plr in pairs(Players:GetPlayers()) do
+                if plr~=LocalPlayer and plr.Character then createHighlight(plr.Character,state.espColor) end
+            end
+            Players.PlayerAdded:Connect(function(p)
+                p.CharacterAdded:Connect(function(c)
+                    task.wait(0.3)
+                    if state.esp then createHighlight(c,state.espColor) end
+                end)
+            end)
+            notifyOk("ESP enabled")
+        else
+            clearHighlights()
+            notifyNo("ESP disabled")
+        end
+    end
+})
+
+-- ESP Color Picker
+Tabs.Visuals:CreateColorPicker({Name="ESP Color", Default=state.espColor, Callback=function(c)
+    state.espColor=c
+    if state.esp then clearHighlights(); for _,plr in pairs(Players:GetPlayers()) do if plr.Character and plr~=LocalPlayer then createHighlight(plr.Character,c) end end end
+end})
+
+-- Crosshair
+local screenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+screenGui.Name = "LB_CrosshairGui"
+local crosshair = Instance.new("Frame")
+crosshair.Name="LB_Crosshair"
+crosshair.AnchorPoint=Vector2.new(0.5,0.5)
+crosshair.Size=UDim2.new(0,10,0,10)
+crosshair.Position=UDim2.fromScale(0.5,0.5)
+crosshair.BackgroundColor3=Color3.new(1,1,1)
+crosshair.ZIndex=10
+crosshair.Parent=screenGui
+
+Tabs.Visuals:CreateToggle({Name="Crosshair", CurrentValue=true, Callback=function(v) screenGui.Enabled=v notifyOk("Crosshair "..(v and "enabled" or "disabled")) end})
+
+-- FOV Slider
+Tabs.Visuals:CreateSlider({Name="Field of View", Range={50,140}, Increment=1, CurrentValue=workspace.CurrentCamera.FieldOfView, Callback=function(v) workspace.CurrentCamera.FieldOfView=v end})
+
+print("[LB_HUB] Part3 (Visuals & Aim) loaded")
+-- part4_misc_advanced.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G_LB_HUB.notifyNo
+local player = game:GetService("Players").LocalPlayer
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+
+-- AFK Prevention
+Tabs.Misc:CreateToggle({Name="AFK Prevention", CurrentValue=state.afkPrevent, Callback=function(v) state.afkPrevent=v notifyOk("AFK Prevention "..(v and "enabled" or "disabled")) end})
+spawn(function()
+    while true do
+        task.wait(60)
+        if state.afkPrevent then
+            VirtualUser:Button2Down(Vector2.new(0,0))
+            VirtualUser:Button2Up(Vector2.new(0,0))
+        end
+    end
+end)
+
+-- Music Player
+local function playMusic(id, vol)
+    vol = vol or state.musicVolume
+    local s=Instance.new("Sound",workspace)
+    s.SoundId="rbxassetid://"..tostring(id)
+    s.Volume=vol
+    s.Looped=true
+    s:Play()
+    return s
+end
+
+Tabs.Misc:CreateInput({Name="Play Music (Asset ID)", PlaceholderText="ID", RemoveTextAfterFocusLost=false, Callback=function(val)
+    if tonumber(val) then
+        local s = playMusic(tonumber(val))
+        notifyOk("Music started")
+        Tabs.Misc:CreateButton({Name="Stop Music", Callback=function() if s then s:Stop(); s:Destroy(); notifyOk("Music stopped") end end})
+    else notifyNo("Invalid ID") end
+end})
+
+-- Particle FX
+Tabs.Misc:CreateToggle({Name="Particle FX", CurrentValue=false, Callback=function(v)
+    state.particleEnabled=v
+    if v then
+        notifyOk("Particle FX enabled")
+        spawn(function()
+            while state.particleEnabled do
+                local char = player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local p = Instance.new("Part", workspace)
+                    p.Size=Vector3.new(0.5,0.5,0.5)
+                    p.Position=char.HumanoidRootPart.Position+Vector3.new(math.random(-5,5),math.random(1,5),math.random(-5,5))
+                    p.Anchored=false
+                    p.CanCollide=false
+                    local bv=Instance.new("BodyVelocity",p)
+                    bv.MaxForce=Vector3.new(1e5,1e5,1e5)
+                    bv.Velocity=Vector3.new(0,8,0)
+                    game:GetService("Debris"):AddItem(p,2)
+                end
+                task.wait(0.2)
+            end
+        end)
+    else notifyNo("Particle FX disabled") end
+end})
+
+print("[LB_HUB] Part4 (Misc / Advanced) loaded")
+-- part5_loader_and_devtools.lua
+local Tabs = _G.LB_HUB.Tabs
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local state = _G.LB_HUB.state
+
+-- Script Loader
+Tabs.Scripts:CreateInput({
+    Name="Load External Script (Raw URL)",
+    PlaceholderText="https://raw.githubusercontent.com/.../script.lua",
+    RemoveTextAfterFocusLost=false,
+    Callback=function(url)
+        local ok,res = pcall(function() return game:HttpGet(url) end)
+        if ok and res then
+            local suc, err = pcall(function() loadstring(res)() end)
+            if suc then notifyOk("Script executed successfully") else notifyNo("Script error: "..tostring(err)) end
+        else
+            notifyNo("Failed to fetch script")
+        end
+    end
+})
+
+-- Dev Tools (F6 for toggles)
+Tabs.Scripts:CreateButton({Name="Toggle Fly GUI", Callback=function()
+    state.flying = not state.flying
+    notifyOk("Fly GUI "..(state.flying and "enabled" or "disabled"))
+end})
+
+-- Key Logger placeholder (for dev only)
+Tabs.Scripts:CreateButton({Name="Print State", Callback=function()
+    print("LB_HUB STATE:",state)
+    notifyOk("State printed to console")
+end})
+
+print("[LB_HUB] Part5 (Loader & Dev Tools) loaded")
+-- part6_fun_cosmetics.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local getChar = _G.LB_HUB.getChar
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local LocalPlayer = game:GetService("Players").LocalPlayer
+local RunService = game:GetService("RunService")
+
+local TabMisc = Tabs.Misc
+
+-- TikTok button
+TabMisc:CreateButton({
+    Name="TikTok: lil.brojames (copy)",
+    Callback=function()
+        pcall(function() setclipboard("lil.brojames") end)
+        notifyOk("Copied TikTok handle! Paste into TikTok")
+    end
+})
+
+-- Rainbow Character
+TabMisc:CreateToggle({
+    Name="Rainbow Character",
+    CurrentValue=state.rainbowChar,
+    Callback=function(v)
+        state.rainbowChar=v
+        if v then
+            notifyOk("Rainbow enabled")
+            spawn(function()
+                while state.rainbowChar do
+                    local char=getChar()
+                    if char then
+                        for _,p in pairs(char:GetDescendants()) do
+                            if p:IsA("BasePart") then
+                                p.Color=Color3.fromHSV(tick()%5/5,1,1)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+            end)
+        else notifyNo("Rainbow disabled") end
+    end
+})
+
+-- Headless toggle
+TabMisc:CreateButton({Name="Toggle Headless", Callback=function()
+    local char=getChar()
+    if char and char:FindFirstChild("Head") then
+        char.Head.Transparency=(char.Head.Transparency==0 and 1 or 0)
+        notifyOk("Headless toggled")
+    end
+end})
+
+-- Spinbot
+TabMisc:CreateToggle({Name="Spinbot", CurrentValue=state.spinbot, Callback=function(v)
+    state.spinbot=v
+    if v then
+        notifyOk("Spinbot enabled")
+        spawn(function()
+            while state.spinbot do
+                local char=getChar()
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.CFrame *= CFrame.Angles(0,math.rad(30),0)
+                end
+                task.wait(0.05)
+            end
+        end)
+    else notifyNo("Spinbot disabled") end
+end})
+
+-- Bubble pop sound
+TabMisc:CreateButton({Name="Bubble Pop Sound", Callback=function()
+    local s=Instance.new("Sound",workspace)
+    s.SoundId="rbxassetid://130762736"
+    s.Volume=1
+    s:Play()
+    game:GetService("Debris"):AddItem(s,3)
+    notifyOk("Pop!")
+end})
+
+print("[LB_HUB] Part6 (Fun/Cosmetics) loaded")
+-- part7_extreme_utils.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local LocalPlayer = game:GetService("Players").LocalPlayer
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
+local workspace = game:GetService("Workspace")
+
+local TabUtils = Tabs.Utilities
+
+-- Rejoin server
+TabUtils:CreateButton({Name="Rejoin Server", Callback=function()
+    notifyOk("Rejoining...")
+    TeleportService:TeleportToPlaceInstance(game.PlaceId,game.JobId,LocalPlayer)
+end})
+
+-- Server hop
+TabUtils:CreateButton({Name="Server Hop", Callback=function()
+    notifyOk("Server hop in progress...")
+    local suc, res = pcall(function()
+        return game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100")
+    end)
+    if suc then
+        local json=game:GetService("HttpService"):JSONDecode(res)
+        for _,srv in pairs(json.data) do
+            if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId,srv.id,LocalPlayer)
+                return
+            end
+        end
+    end
+    notifyNo("No suitable server found")
+end})
+
+-- Crash tool
+TabUtils:CreateButton({Name="Crash (spawn parts)", Callback=function()
+    notifyOk("Spawning parts...")
+    for i=1,100 do
+        local p=Instance.new("Part",workspace)
+        p.Size=Vector3.new(50,50,50)
+        p.Position=LocalPlayer.Character and LocalPlayer.Character:GetPivot().p + Vector3.new(math.random(-20,20),20,math.random(-20,20)) or Vector3.new(0,50,0)
+        p.Anchored=false
+        p.Material=Enum.Material.Neon
+        p.Color=Color3.new(1,0,1)
+    end
+end})
+
+-- Anti-lag cleaner
+TabUtils:CreateButton({Name="Clear Loose Parts", Callback=function()
+    for _,p in pairs(workspace:GetChildren()) do
+        if p:IsA("Part") and not p.Anchored then p:Destroy() end
+    end
+    notifyOk("Cleared unanchored parts")
+end})
+
+-- Night vision toggle
+TabUtils:CreateToggle({Name="Night Vision", CurrentValue=state.nightVision, Callback=function(v)
+    state.nightVision=v
+    if v then
+        game.Lighting.Brightness=3
+        game.Lighting.Ambient=Color3.new(1,1,1)
+        notifyOk("Night vision enabled")
+    else
+        game.Lighting.Brightness=1
+        game.Lighting.Ambient=Color3.new(0,0,0)
+        notifyNo("Night vision disabled")
+    end
+end})
+
+-- X-ray toggle
+TabUtils:CreateToggle({Name="X-Ray Vision", CurrentValue=state.xray, Callback=function(v)
+    state.xray=v
+    spawn(function()
+        while state.xray do
+            for _,p in pairs(workspace:GetDescendants()) do
+                if p:IsA("BasePart") then p.LocalTransparencyModifier=0.5 end
+            end
+            task.wait(1)
+        end
+    end)
+end})
+
+print("[LB_HUB] Part7 (Extreme Utilities) loaded")
+-- part8_combat.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local LocalPlayer = game:GetService("Players").LocalPlayer
+local RunService = game:GetService("RunService")
+local workspace = game:GetService("Workspace")
+
+local TabCombat = Tabs.Player
+
+-- Silent Aim placeholder
+state.silentAim=false
+TabCombat:CreateToggle({Name="Silent Aim", CurrentValue=false, Callback=function(v)
+    state.silentAim=v
+    notifyOk("Silent Aim "..(v and "enabled" or "disabled"))
+end})
+
+-- Triggerbot placeholder
+state.triggerBot=false
+TabCombat:CreateToggle({Name="Trigger Bot", CurrentValue=false, Callback=function(v)
+    state.triggerBot=v
+    notifyOk("Trigger Bot "..(v and "enabled" or "disabled"))
+end})
+
+-- Fast attack
+TabCombat:CreateSlider({Name="Attack Speed", Range={0.1,2}, Increment=0.05, CurrentValue=1, Suffix="x", Callback=function(v)
+    state.attackSpeed=v
+end})
+
+-- Hitbox expand
+TabCombat:CreateSlider({Name="Hitbox Size", Range={1,10}, Increment=0.5, CurrentValue=3, Callback=function(v)
+    state.hitboxSize=v
+end})
+
+print("[LB_HUB] Part8 (Combat Enhancements) loaded")
+-- part9_automation.lua
+local Tabs = _G.LB_HUB.Tabs
+local state = _G.LB_HUB.state
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local LocalPlayer = game:GetService("Players").LocalPlayer
+local workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+
+local TabAuto = Tabs.Utilities
+
+-- Auto-collect example
+state.autoCollect=false
+TabAuto:CreateToggle({Name="Auto Collect Items", CurrentValue=false, Callback=function(v)
+    state.autoCollect=v
+    if v then
+        notifyOk("Auto-collect enabled")
+        spawn(function()
+            while state.autoCollect do
+                for _,item in pairs(workspace:GetDescendants()) do
+                    if item:IsA("Part") and item.Name:match("Coin") then
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = item.CFrame
+                    end
+                end
+                task.wait(0.2)
+            end
+        end)
+    else notifyNo("Auto-collect disabled") end
+end})
+
+-- Auto Quest / Daily
+TabAuto:CreateButton({Name="Claim Daily/Quest", Callback=function()
+    -- Placeholder, depends on game remotes
+    notifyOk("Auto quest run (placeholder)")
+end})
+
+print("[LB_HUB] Part9 (Automation) loaded")
+-- part10_social.lua
+local Tabs = _G.LB_HUB.Tabs
+local notifyOk = _G.LB_HUB.notifyOk
+local notifyNo = _G.LB_HUB.notifyNo
+local LocalPlayer = game:GetService("Players").LocalPlayer
+local TabMisc = Tabs.Misc
+
+-- Emote spam
+TabMisc:CreateButton({Name="Emote Spam Dance", Callback=function()
+    local char=LocalPlayer.Character
+    if char then
+        notifyOk("Starting emote spam (local)")
+        spawn(function()
+            for i=1,5 do
+                if char:FindFirstChildOfClass("Humanoid") then
+                    char.Humanoid:LoadAnimation(Instance.new("Animation")).Speed=2
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end})
+
+-- Name / Chat customization
+TabMisc:CreateInput({Name="Change Chat Name", PlaceholderText="New Name", Callback=function(val)
+    if val and val~="" then
+        LocalPlayer.DisplayName=val
+        notifyOk("DisplayName changed locally")
+    end
+end})
+
+-- Fake admin commands
+TabMisc:CreateButton({Name="Fake Admin: Bring All", Callback=function()
+    notifyOk("Fake admin command executed (local only)")
+end})
+
+-- Mini-games
+TabMisc:CreateButton({Name="Roll Dice", Callback=function()
+    local r=math.random(1,6)
+    notifyOk("You rolled a "..r)
+end})
+
+-- TikTok copy button
+TabMisc:CreateButton({Name="TikTok: lil.brojames (copy)", Callback=function()
+    pcall(function() setclipboard("lil.brojames") end)
+    notifyOk("Copied TikTok handle! Paste into TikTok")
+end})
+
+print("[LB_HUB] Part10 (Extra Fun / Social) loaded")
+local base = "https://raw.githubusercontent.com/su8permanscripts/roblox-scripts/main/"
+local parts = {
+    "part1_core.lua","part2_movement.lua","part3_visuals_aim.lua","part4_misc_advanced.lua",
+    "part5_loader_and_devtools.lua","part6_fun_cosmetics.lua","part7_extreme_utils.lua",
+    "part8_combat.lua","part9_automation.lua","part10_social.lua"
+}
+for _, p in ipairs(parts) do
+    local url = base..p
+    local ok,res = pcall(function() return game:HttpGet(url) end)
+    if ok and res then
+        local suc, err = pcall(function() loadstring(res)() end)
+        if not suc then warn("Error running "..p..": "..tostring(err)) end
+    else
+        warn("Failed to fetch "..p)
+    end
+end
+print("[LB_HUB] loader finished.")
